@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI;
 using Unity.Barracuda;
 using System.IO;
 using Unity.Barracuda.ONNX;
@@ -11,11 +12,6 @@ public class Joint
     public int Y;
 }
 
-public class Person
-{
-    Joint[] joints = new Joint[19];
-}
-
 public class OpenPose : MonoBehaviour
 {
     int camHeight = 720;
@@ -25,9 +21,8 @@ public class OpenPose : MonoBehaviour
     int inputChannel = 3;
     int outputHeight = 46;
     int outputWidth = 82;
-    int jointSize = 19;
-    int depth = 24;
-    double threshold = 0.9;
+    int jointSize = 14;
+    double threshold = 0.2;
 
     Tensor input;
     Tensor out_paf;
@@ -38,22 +33,15 @@ public class OpenPose : MonoBehaviour
     Color[] pen;
     Color c;
     WebCamTexture webcamTexture;
+    RawImage rawImage;
 
-    void Start()
+    private void Awake()
     {
-        /*Texture2D camRenderer = new Texture2D(1280, 720, TextureFormat.RGBA32, false);
-        if (webcamTexture == null)
-            webcamTexture = new WebCamTexture();
-        //renderer = GetComponent<Renderer>();
-        webcamTexture.deviceName = WebCamTexture.devices[1].name;
-        //renderer.material.mainTexture = webcamTexture;
-        if (!webcamTexture.isPlaying)
-            webcamTexture.Play();*/
+        /*frame = new Texture2D(656, 369, TextureFormat.RGBA32, false);
+        byte[] bytes = File.ReadAllBytes("Assets/Images/image2.png");
+        frame.LoadImage(bytes);*/
 
-        frame = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
-        byte[] bytes = File.ReadAllBytes("Assets/Images/image1.png");
-        frame.LoadImage(bytes);
-
+        rawImage = GetComponent<RawImage>();
         input = new Tensor(1, inputHeight, inputWidth, inputChannel);
         model = (new ONNXModelConverter(true)).Convert("Assets/Models/openpose-coco.onnx");
         engine = WorkerFactory.CreateWorker(model, WorkerFactory.Device.GPU);
@@ -68,34 +56,51 @@ public class OpenPose : MonoBehaviour
             new Color(1, 0, 1, 1),
             new Color(0, 1, 1, 1),
             new Color(1, 1, 1, 1),
-            new Color(0, 0, 0, 1),
-            new Color(0, 0, 0, 1),
             new Color(1, 0.5f, 1, 1),
             new Color(1, 1, 0.5f, 1),
             new Color(0.5f, 1, 1, 1),
             new Color(0.5f, 0.5f, 1, 1),
             new Color(0.5f, 1, 0.5f, 1),
             new Color(1, 0.5f, 0.5f, 1),
-            new Color(0, 0, 0, 1),
-            new Color(0, 0, 0, 1),
-            new Color(0, 0, 0, 1)
         };
+    }
 
-        ExecuteModel();
-        CreateJoints();
-        WriteImage();
+    void Start()
+    {
+        if (webcamTexture == null)
+            webcamTexture = new WebCamTexture();
+        webcamTexture.deviceName = WebCamTexture.devices[1].name;
+        if (!webcamTexture.isPlaying)
+            webcamTexture.Play();
+        camHeight = webcamTexture.height;
+        camWidth = webcamTexture.width;
+        StartCoroutine(RunPoseEstimation());
     }
 
     void Update()
     {
-        //StartCoroutine(RunPoseEstimation());
+
     }
 
     IEnumerator RunPoseEstimation()
     {
-        ExecuteModel();
-        CreateJoints();
-        yield return null;
+        while (true)
+        {
+            SetFrame();
+            ExecuteModel();
+            CreateJoints();
+            frame.Apply();
+            rawImage.texture = frame;
+            //WriteImage();
+            yield return new WaitForSeconds(1);
+        }
+    }
+
+    void SetFrame()
+    {
+        frame = new Texture2D(camWidth, camHeight, TextureFormat.RGBA32, false);
+        frame.SetPixels(0, 0, camWidth, camHeight, webcamTexture.GetPixels());
+        TextureScale.Bilinear(frame, 656, 369);
     }
 
     void ExecuteModel()
@@ -117,18 +122,23 @@ public class OpenPose : MonoBehaviour
 
     void CreateJoints()
     {
-        double val;
+        double val_conf;
+        double val_paf1;
+        double val_paf2;
+        int x, y;
         for (int i = 0; i < outputWidth; i++)
         {
             for (int j = 0; j < outputHeight; j++)
             {
                 for (int k = 0; k < jointSize; k++)
                 {
-                    val = out_conf[0, j, i, k];
-                    if (val < 0.6 && val > 0.5)
+                    val_conf = out_conf[0, j, i, k];
+                    val_paf1 = out_paf[0, j, i, 2 * k];
+                    val_paf2 = out_paf[0, j, i, 2 * k + 1];
+                    x = (int)(i * inputWidth / outputWidth);
+                    y = inputHeight - (int)(j * inputHeight / outputHeight) - 1;
+                    if (val_conf > threshold)
                     {
-                        int x = (int)(i * inputWidth / outputWidth);
-                        int y = inputHeight - (int)(j * inputHeight / outputHeight) - 1;
                         for (int n=-1; n<2; n++)
                         {
                             for (int m=-1; m<2; m++)
@@ -136,6 +146,10 @@ public class OpenPose : MonoBehaviour
                                 frame.SetPixel(x + m, y + n, pen[k]);
                             }
                         }
+                    }
+                    else if (val_paf1 > threshold || val_paf2 > threshold)
+                    {
+                        frame.SetPixel(x, y, pen[7]);
                     }
                 }
             }

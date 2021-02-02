@@ -1,2 +1,5 @@
-*.onnx
 *.meta
+*.onnx
+*.jpg
+*.png
+*.mp4
